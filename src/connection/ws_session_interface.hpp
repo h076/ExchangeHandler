@@ -6,8 +6,7 @@ enum class connection_status
 {
   connected,
   disconnected,
-  error,
-  write_failed
+  error
 };
 
 class ws_session_interface

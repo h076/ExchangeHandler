@@ -18,6 +18,7 @@ endif()
 # Source files for the connection module
 set(CONNECTION_SOURCES
     src/connection/ws_session.cpp
+    src/connection/session_state_machine.cpp
 )
 
 # Create a library from the connection sources

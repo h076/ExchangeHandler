@@ -32,7 +32,7 @@ auto ws_session::run() -> net::awaitable<void>
   net::ip::tcp::endpoint ep
       = co_await tcp.async_connect(results, net::use_awaitable);
 
-  // TLS handshake - only when using wss
+  // TLS handshake
   if (!SSL_set_tlsext_host_name(
           ws.next_layer().native_handle(), config.host.c_str())) {
     throw beast::system_error(
@@ -80,7 +80,8 @@ auto ws_session::read_loop(auto& ws_stream) -> net::awaitable<void>
 
 void ws_session::disconnect()
 {
-  net::co_spawn(ws.get_executor(), teardown(), make_state_handler(connection_status::disconnected));
+  net::co_spawn(ws.get_executor(), teardown(), 
+      make_state_handler(connection_status::error));
 }
 
 auto ws_session::teardown() -> net::awaitable<void>
@@ -88,11 +89,17 @@ auto ws_session::teardown() -> net::awaitable<void>
   // Can just push out async_close and beast will terminate an inflight read
   // with wbsocket::error::closed
   co_await ws.async_close(websocket::close_code::normal, net::use_awaitable);
+
+  if (state_handler)
+  {
+    state_handler(connection_status::disconnected);
+  }
 }
 
 void ws_session::send(std::string_view payload)
 {
-  net::co_spawn(ws.get_executor(), write(payload), make_state_handler(connection_status::write_failed));
+  net::co_spawn(ws.get_executor(), write(payload), 
+      make_state_handler(connection_status::error));
 }
 
 auto ws_session::write(std::string_view& payload) -> net::awaitable<void>
