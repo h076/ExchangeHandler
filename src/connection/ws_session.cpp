@@ -1,8 +1,8 @@
 #include "ws_session.hpp"
 #include <iostream>
 
-ws_session::ws_session(net::any_io_executor ex, connection_config cc)
-  : ws(ex, cc.tls), config(std::move(cc)), write_ch(ex, write_queue_capacity), running(false), stopping(false) {}
+ws_session::ws_session(net::any_io_executor e, connection_config cc)
+  : ex(std::move(e)), config(std::move(cc)), write_ch(ex, write_queue_capacity), running(false), stopping(false) {}
 
 void ws_session::connect()
 {
@@ -20,19 +20,21 @@ void ws_session::connect()
   running = true;
   stopping = false;
 
+  ws.emplace(ex, config.tls);
+
   write_ch.reset();
 
   // co spawn the run function
   // use the state handler to handle errors
-  net::co_spawn(ws.get_executor(), run(), make_run_handler());
+  net::co_spawn(ex, run(), make_run_handler());
 }
 
 auto ws_session::run() -> net::awaitable<void>
 {
-  auto& tcp = get_lowest_layer(ws);
+  auto& tcp = get_lowest_layer(*ws);
 
   // Resolve
-  net::ip::tcp::resolver resolver(ws.get_executor());
+  net::ip::tcp::resolver resolver(ex);
   net::ip::tcp::resolver::results_type results
       = co_await resolver.async_resolve(config.host, std::to_string(config.port), net::use_awaitable);
 
@@ -43,7 +45,7 @@ auto ws_session::run() -> net::awaitable<void>
 
   // TLS handshake
   if (!SSL_set_tlsext_host_name(
-          ws.next_layer().native_handle(), config.host.c_str())) {
+          ws->next_layer().native_handle(), config.host.c_str())) {
     throw beast::system_error(
         beast::error_code(
             static_cast<int>(::ERR_get_error()),
@@ -51,12 +53,12 @@ auto ws_session::run() -> net::awaitable<void>
   }
 
   tcp.expires_after(std::chrono::seconds(15));
-  co_await ws.next_layer().async_handshake(
+  co_await ws->next_layer().async_handshake(
       net::ssl::stream_base::client, net::use_awaitable);
 
   // WebSocket Upgrade
   tcp.expires_after(std::chrono::seconds(15));
-  co_await ws.async_handshake(
+  co_await ws->async_handshake(
       config.host + ":" + std::to_string(ep.port()),
       config.target,
       net::use_awaitable);
@@ -68,7 +70,7 @@ auto ws_session::run() -> net::awaitable<void>
   auto opt = stream_base::timeout::suggested(role_type::client);
   opt.idle_timeout = std::chrono::seconds(15);
   opt.keep_alive_pings = true;
-  ws.set_option(opt);
+  ws->set_option(opt);
 
   if (state_handler)
   {
@@ -84,7 +86,7 @@ auto ws_session::read_loop() -> net::awaitable<void>
 {
   boost::beast::flat_buffer buffer;
   for (;;) {
-    auto bytes_read = co_await ws.async_read(buffer, net::use_awaitable);
+    auto bytes_read = co_await ws->async_read(buffer, net::use_awaitable);
 
     if (message_handler) {
       auto buf = buffer.data();
@@ -107,7 +109,7 @@ auto ws_session::write_loop() -> net::awaitable<void>
     {
       // disconnect() closed the channel
       // queue has been drained
-      co_await ws.async_close(websocket::close_code::normal, net::use_awaitable);
+      co_await ws->async_close(websocket::close_code::normal, net::use_awaitable);
       co_return;
     }
     else if (ec)
@@ -115,7 +117,7 @@ auto ws_session::write_loop() -> net::awaitable<void>
       throw boost::system::system_error(ec);
     }
 
-    co_await ws.async_write(net::buffer(msg), net::use_awaitable);
+    co_await ws->async_write(net::buffer(msg), net::use_awaitable);
   }
 }
 
@@ -144,7 +146,7 @@ void ws_session::disconnect()
 void ws_session::send(std::string payload)
 {
   // dispatch onto the strand, the channel and flags are not thread safe
-  net::dispatch(ws.get_executor(),
+  net::dispatch(ex,
       [self = shared_from_this(), p = std::move(payload)] () mutable
       {
         if (!self->running || self->stopping)
@@ -159,7 +161,9 @@ void ws_session::send(std::string payload)
         {
           std::cerr << "ws_session: write queue is full, dropping message" << std::endl;
           beast::error_code ignore;
-          beast::get_lowest_layer(self->ws).socket().close(ignore);
+          // Don't reset ws here: read/write loops are suspended on it. Closing the
+          // socket ends them, run()'s handler reports error, connect() rebuilds.
+          beast::get_lowest_layer(*(self->ws)).socket().close(ignore);
         }
       });
 }
@@ -202,7 +206,7 @@ std::function<void(std::exception_ptr)> ws_session::make_run_handler()
       if (e)
       {
         std::cerr << "ws_session lost: " << describe(e)
-                  << " (close reason: '" << self->ws.reason().reason << "')" << std::endl;
+                  << " (close reason: '" << self->ws->reason().reason << "')" << std::endl;
       }
     }
     
@@ -229,7 +233,10 @@ std::function<void(std::exception_ptr)> ws_session::make_failure_handler(const c
     std::cerr << "ws_session " << op << " failed: " << describe(e) << std::endl;
 
     beast::error_code ignored;
-    beast::get_lowest_layer(self->ws).socket().close(ignored);
+    if (self->ws)
+    {
+      beast::get_lowest_layer(*(self->ws)).socket().close(ignored);
+    }
   };
 }
 

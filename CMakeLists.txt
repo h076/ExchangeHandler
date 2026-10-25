@@ -22,6 +22,8 @@ set(CONNECTION_SOURCES
     src/connection/ws_session.cpp
     src/connection/session_state_machine.cpp
     src/connection/subscription_manager.cpp
+    src/connection/reconnect_policy.cpp
+    src/connection/message_source_deque.cpp
 )
 
 # Create a library from the connection sources
@@ -70,4 +72,34 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME subscription_manager_test COMMAND subscription_manager_test)
+
+    add_executable(reconnect_policy_test
+        tests/unit/connection/reconnect_policy_test.cpp
+    )
+    target_link_libraries(reconnect_policy_test
+        PRIVATE
+            connection_lib
+    )
+
+    add_test(NAME reconnect_policy_test COMMAND reconnect_policy_test)
+
+    add_executable(session_state_machine_test
+        tests/unit/connection/session_state_machine_test.cpp
+    )
+    target_link_libraries(session_state_machine_test
+        PRIVATE
+            connection_lib
+    )
+
+    add_test(NAME session_state_machine_test COMMAND session_state_machine_test)
+
+    add_executable(message_source_deque_test
+        tests/unit/connection/message_source_deque_test.cpp
+    )
+    target_link_libraries(message_source_deque_test
+        PRIVATE
+            connection_lib
+    )
+
+    add_test(NAME message_source_deque_test COMMAND message_source_deque_test)
 endif()

@@ -1,32 +1,55 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <type_traits>
+
+#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include "ws_session_interface.hpp"
 #include "subscription_manager.hpp"
+#include "reconnect_policy.hpp"
+#include "message_source_interface.hpp"
 
-/* state machine should expose a message source interface 
- * to allow decode layer to pop from the queue of received data */ 
-
-enum class message_type
+enum class session_state
 {
-  auth,
-  ping,
-  subscribe,
-  reconnect,
-  disconnect,
-  unknown
+  idle,          // constructed, run() not called yet
+  connecting,    // connect() issued, waiting for connected / error
+  live,          // connected and subscribed
+  backing_off,   // waiting on the retry timer
+  stopping,      // stop() requested, waiting for the session to close
+  stopped,       // closed on request
+  failed         // reconnect policy gave up
 };
 
-class session_state_machine : public std::enable_shared_from_this<session_state_machine>
+const char* to_string(session_state s);
+
+// The state machine *is* the message queue: it inherits from Queue, pushes every
+// received payload into itself, and the decode layer calls pop() on it.
+// Swapping the queue (e.g. for a lock-free one) is just a different template
+// argument: session_state_machine<message_source_deque>.
+//
+// Queue must derive from message_source_interface and be default constructible.
+// Implemented in session_state_machine.cpp, which explicitly instantiates the
+// supported queue types: add a line there for each new Queue.
+//
+// Threading: push() and pop() only touch the queue, so they are as thread safe
+// as Queue (the producer is the session's strand, the consumer is the decode
+// thread). Everything else must run on the session's strand: the timer, state
+// and policy are not thread safe.
+template <class Queue>
+class session_state_machine : public Queue,
+                              public std::enable_shared_from_this<session_state_machine<Queue>>
 {
+  static_assert(std::is_base_of_v<message_source_interface, Queue>,
+                "Queue must derive from message_source_interface");
+
   public:
 
-    // Receives every application payload. The span is only valid for the
-    // duration of the call: copy it if it needs to outlive the callback.
-    using message_sink = std::function<void(std::span<const std::byte>)>;
-
-    session_state_machine(subscription_manager subs, message_sink sink);
+    session_state_machine(boost::asio::any_io_executor ex,
+                          subscription_manager subs,
+                          reconnect_policy policy = reconnect_policy{});
     ~session_state_machine();
 
     // Make the state machine non-copyable and non-movable
@@ -37,6 +60,13 @@ class session_state_machine : public std::enable_shared_from_this<session_state_
 
     void run(std::shared_ptr<ws_session_interface> s);
 
+    // Intentional shutdown: cancels any pending retry and closes the session
+    void stop();
+
+    session_state state() const { return curr_state; }
+
+    // push() / pop() are inherited from Queue
+
   private:
 
     void on_connection_status(connection_status status);
@@ -45,15 +75,20 @@ class session_state_machine : public std::enable_shared_from_this<session_state_
     void on_connected();
     void on_disconnect();
     void on_error();
-    void on_write_failed();
+
+    void schedule_reconnect(reconnect_policy::duration delay);
 
   private:
 
     std::shared_ptr<ws_session_interface> session;
 
-    connection_status curr_state;
+    session_state curr_state;
 
     subscription_manager subs;
-    message_sink sink;
 
+    // Stamped on every received_message; incremented on each successful connect
+    std::uint64_t connection_epoch = 0;
+
+    reconnect_policy policy;
+    boost::asio::steady_timer retry_timer;
 };

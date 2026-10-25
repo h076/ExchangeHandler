@@ -7,11 +7,13 @@
 #include <boost/asio/experimental/channel.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
+#include <optional>
+
 #include "ws_session_interface.hpp"
 
 namespace net = boost::asio;
-namespace beast = boost::beast;
 using namespace boost::beast;
+namespace beast = boost::beast;
 using namespace boost::beast::websocket;
   
 struct connection_config
@@ -56,9 +58,14 @@ class ws_session : public ws_session_interface, public std::enable_shared_from_t
     std::function<void(std::exception_ptr)> make_failure_handler(const char* op);
 
   private:
+   
+    using ws_stream = stream<net::ssl::stream<tcp_stream>>;
     
-    stream<net::ssl::stream<tcp_stream>> ws;
+    net::any_io_executor ex;
     connection_config config;
+
+    // Stream will be rebuilt after a disconnect or error, and on initial connect()
+    std::optional<ws_stream> ws;
 
     // Using a boost channel to handle the outbound queue on a connection object
     using write_channel = net::experimental::channel<void(boost::system::error_code, std::string)>;
