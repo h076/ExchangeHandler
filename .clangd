@@ -1,2 +1,12 @@
 CompileFlags:
+  # Flags and include paths come from build/compile_commands.json
+  # (CMAKE_EXPORT_COMPILE_COMMANDS); this is only a fallback.
+  CompilationDatabase: build
   Add: [-std=c++20]
+
+---
+# Template definition files: parse as C++ headers (clang doesn't know .tpp)
+If:
+  PathMatch: .*\.tpp
+CompileFlags:
+  Add: [-xc++-header]

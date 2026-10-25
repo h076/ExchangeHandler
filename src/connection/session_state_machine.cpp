@@ -200,6 +200,7 @@ void session_state_machine<Queue>::on_message(std::span<const std::byte> data)
   // call, so the payload is copied before it crosses to the decode thread.
   received_message msg;
   msg.recv_time = received_message::clock::now();
+  msg.payload.reserve(data.size() + received_message::payload_padding);
   msg.payload.assign(reinterpret_cast<const char*>(data.data()), data.size());
   msg.connection_epoch = connection_epoch;
 

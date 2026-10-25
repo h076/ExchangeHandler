@@ -1,14 +1,31 @@
-cmake_minimum_required(VERSION 3.12)
+# 3.14 for FetchContent_MakeAvailable
+cmake_minimum_required(VERSION 3.14)
 project(market_book LANGUAGES CXX)
 
 # C++20 is required for std::span
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Write build/compile_commands.json for clangd (include paths, flags)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Find Boost (SSL component is required for TLS)
 find_package(Boost REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
+
+# simdjson (decode layer): use an installed package if there is one,
+# otherwise download and build the pinned release
+find_package(simdjson CONFIG QUIET)
+if(NOT simdjson_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(simdjson
+        URL      https://github.com/simdjson/simdjson/archive/refs/tags/v5.0.5.tar.gz
+        URL_HASH SHA256=50bb17769e1054ff1bfcd5dbbfcf33544c77f6ebdb31a318436ea0e47f78f571
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(simdjson)
+endif()
 
 # Asio and Beast are header-only libraries
 if(NOT TARGET Boost::headers)
@@ -42,6 +59,18 @@ target_link_libraries(connection_lib
 target_include_directories(connection_lib
     PUBLIC
         src/connection
+)
+
+# Decode module: header-only for now (the venue decoders are templates)
+add_library(decode_lib INTERFACE)
+target_link_libraries(decode_lib
+    INTERFACE
+        simdjson::simdjson
+)
+target_include_directories(decode_lib
+    INTERFACE
+        src/decode
+        src/common
 )
 
 # Live smoke test against Kraken's public WebSocket feed (needs network)
@@ -102,4 +131,24 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME message_source_deque_test COMMAND message_source_deque_test)
+
+    add_executable(kraken_decoder_test
+        tests/unit/decode/kraken_decoder_test.cpp
+    )
+    target_link_libraries(kraken_decoder_test
+        PRIVATE
+            decode_lib
+    )
+
+    add_test(NAME kraken_decoder_test COMMAND kraken_decoder_test)
+
+    add_executable(kraken_parse_test
+        tests/unit/decode/kraken_parse_test.cpp
+    )
+    target_link_libraries(kraken_parse_test
+        PRIVATE
+            decode_lib
+    )
+
+    add_test(NAME kraken_parse_test COMMAND kraken_parse_test)
 endif()

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -10,7 +11,13 @@ struct received_message
 {
   using clock = std::chrono::steady_clock;
 
-  // Raw WebSocket payload (JSON text for Kraken), copied out of the read buffer
+  // Spare capacity reserved after the payload. SIMD JSON parsers read past the
+  // end of the input: simdjson needs capacity() >= size() + 64 or it rejects
+  // the document. Reserving it here avoids a second copy in the decoder.
+  static constexpr std::size_t payload_padding = 64;
+
+  // Raw WebSocket payload (JSON text for Kraken), copied out of the read buffer.
+  // capacity() >= size() + payload_padding.
   std::string payload;
 
   // When the connection layer received it, for latency measurement

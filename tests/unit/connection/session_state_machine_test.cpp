@@ -399,6 +399,25 @@ static void messages_carry_receive_time()
   CHECK(m->recv_time <= after);
 }
 
+static void payload_has_parser_padding()
+{
+  // Decode (simdjson) needs spare capacity after the payload
+  fixture f;
+  f.session->script = {mock_session::outcome::ok};
+  f.sm->run(f.session);
+  f.drain();
+
+  for (const std::string& p : {std::string("x"), std::string(R"({"channel":"heartbeat"})"), std::string(5000, 'a')})
+  {
+    f.session->deliver(p);
+    auto m = f.sm->pop();
+    CHECK(m.has_value());
+    if (!m) return;
+    CHECK(m->payload == p);
+    CHECK(m->payload.capacity() >= m->payload.size() + received_message::payload_padding);
+  }
+}
+
 static void usable_as_message_source_interface()
 {
   // The decode layer can hold the state machine through the base interface
@@ -433,6 +452,7 @@ int main()
   test::run("MessagesCarryConnectionEpoch", messages_carry_connection_epoch);
   test::run("MessagesCarryReceiveTime", messages_carry_receive_time);
   test::run("UsableAsMessageSourceInterface", usable_as_message_source_interface);
+  test::run("PayloadHasParserPadding", payload_has_parser_padding);
 
   return test::summary();
 }
