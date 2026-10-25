@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find Boost (SSL component is required for TLS)
 find_package(Boost REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(Threads REQUIRED)
 
 # Asio and Beast are header-only libraries
 if(NOT TARGET Boost::headers)
@@ -19,6 +21,7 @@ endif()
 set(CONNECTION_SOURCES
     src/connection/ws_session.cpp
     src/connection/session_state_machine.cpp
+    src/connection/subscription_manager.cpp
 )
 
 # Create a library from the connection sources
@@ -26,10 +29,25 @@ add_library(connection_lib ${CONNECTION_SOURCES})
 
 # Link the library with Boost dependencies
 # Boost::headers provides the include directories for Asio/Beast
+# PUBLIC: the connection headers include Boost, and ws_session calls OpenSSL directly
 target_link_libraries(connection_lib
-    PRIVATE
+    PUBLIC
         Boost::headers
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        Threads::Threads
 )
+target_include_directories(connection_lib
+    PUBLIC
+        src/connection
+)
+
+# Live smoke test against Kraken's public WebSocket feed (needs network)
+option(BUILD_LIVE_TESTS "Build live venue test executables" ON)
+if(BUILD_LIVE_TESTS)
+    add_executable(kraken_test src/connection/kraken_test.cpp)
+    target_link_libraries(kraken_test PRIVATE connection_lib)
+endif()
 
 # Install the library
 install(TARGETS connection_lib
@@ -37,3 +55,19 @@ install(TARGETS connection_lib
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
 )
+
+# Unit tests
+option(BUILD_TESTING "Build unit tests" OFF)
+if(BUILD_TESTING)
+    enable_testing()
+
+    add_executable(subscription_manager_test
+        tests/unit/connection/subscription_manager_test.cpp
+    )
+    target_link_libraries(subscription_manager_test
+        PRIVATE
+            connection_lib
+    )
+
+    add_test(NAME subscription_manager_test COMMAND subscription_manager_test)
+endif()

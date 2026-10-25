@@ -1,5 +1,7 @@
+#pragma once
+
 #include <functional>
-#include <string_view>
+#include <string>
 #include <span>
 
 enum class connection_status
@@ -16,7 +18,7 @@ class ws_session_interface
     virtual ~ws_session_interface() = default;
     virtual void connect() = 0;
     virtual void disconnect() = 0;
-    virtual void send(std::string_view payload) = 0;
+    virtual void send(std::string payload) = 0;
 
     // handles application data
     virtual void set_message_handler(std::function<void(std::span<const std::byte>)> handler) = 0;

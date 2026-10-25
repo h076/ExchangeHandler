@@ -1,4 +1,9 @@
-#include "ws_session.hpp"
+#pragma once
+
+#include <memory>
+
+#include "ws_session_interface.hpp"
+#include "subscription_manager.hpp"
 
 /* state machine should expose a message source interface 
  * to allow decode layer to pop from the queue of received data */ 
@@ -13,11 +18,15 @@ enum class message_type
   unknown
 };
 
-class session_state_machine : std::enable_shared_from_this<session_state_machine>
+class session_state_machine : public std::enable_shared_from_this<session_state_machine>
 {
   public:
 
-    session_state_machine(std::unique_ptr<ws_session_interface> s);
+    // Receives every application payload. The span is only valid for the
+    // duration of the call: copy it if it needs to outlive the callback.
+    using message_sink = std::function<void(std::span<const std::byte>)>;
+
+    session_state_machine(subscription_manager subs, message_sink sink);
     ~session_state_machine();
 
     // Make the state machine non-copyable and non-movable
@@ -25,6 +34,8 @@ class session_state_machine : std::enable_shared_from_this<session_state_machine
     session_state_machine &operator=(const session_state_machine& p) = delete;
     session_state_machine(session_state_machine&& p) = delete;
     session_state_machine &operator=(session_state_machine&& p) = delete;
+
+    void run(std::shared_ptr<ws_session_interface> s);
 
   private:
 
@@ -38,8 +49,11 @@ class session_state_machine : std::enable_shared_from_this<session_state_machine
 
   private:
 
-    std::unique_ptr<ws_session_interface> session;
+    std::shared_ptr<ws_session_interface> session;
 
     connection_status curr_state;
+
+    subscription_manager subs;
+    message_sink sink;
 
 };

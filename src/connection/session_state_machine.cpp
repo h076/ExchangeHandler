@@ -1,8 +1,17 @@
 #include "session_state_machine.hpp"
+#include <iostream>
 
-session_state_machine::session_state_machine(std::unique_ptr<ws_session_interface> s)
-  : session(std::move(s)), curr_state(connection_status::disconnected)
+session_state_machine::session_state_machine(subscription_manager s, message_sink m)
+  : curr_state(connection_status::disconnected), subs(std::move(s)), sink(std::move(m))
+{}
+
+session_state_machine::~session_state_machine()
+{}
+
+void session_state_machine::run(std::shared_ptr<ws_session_interface> s)
 {
+  session = std::move(s);
+
   // Use a weak ptr for the call back to prevent nullptr ref if
   // state machine is destroyed before session
   session->set_message_handler([weak = weak_from_this()] (std::span<const std::byte> data)
@@ -20,10 +29,9 @@ session_state_machine::session_state_machine(std::unique_ptr<ws_session_interfac
           self->on_connection_status(status);
         }
       });
-}
 
-session_state_machine::~session_state_machine()
-{}
+  session->connect();
+}
 
 void session_state_machine::on_connection_status(connection_status status)
 {
@@ -43,23 +51,32 @@ void session_state_machine::on_connection_status(connection_status status)
 
 void session_state_machine::on_connected()
 {
-  // handle connection established event
-  // get subsciption messages from sub manager
-  // Send out sub messages
+  curr_state = connection_status::connected;
+
+  for (auto& msg : subs.get_subscription_messages())
+  {
+    session->send(std::move(msg));
+  }
 }
 
 void session_state_machine::on_disconnect()
 {
-  // Reconnect the session (should use a reconnect policy here)
-  session->connect();
+  // Requested close completed, nothing to do
+  curr_state = connection_status::disconnected;
 }
 
 void session_state_machine::on_error()
 {
-  // Teardown session
-  session->disconnect();
+  // TODO: reconnect via a backoff policy once the stream is rebuilt per connect().
+  // Reconnecting immediately on the same SSL stream fails and spins in a tight loop.
+  curr_state = connection_status::error;
+  std::cerr << "session_state_machine: session lost, reconnect not implemented yet" << std::endl;
 }
 
 void session_state_machine::on_message(std::span<const std::byte> data)
 {
+  if (sink)
+  {
+    sink(data);
+  }
 }
