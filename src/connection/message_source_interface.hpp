@@ -2,7 +2,7 @@
 
 #include <optional>
 
-#include "received_message.hpp"
+#include "../common/received_message.hpp"
 
 class message_source_interface
 {

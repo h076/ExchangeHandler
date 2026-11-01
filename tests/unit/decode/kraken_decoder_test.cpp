@@ -1,3 +1,4 @@
+#include <chrono>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -18,7 +19,7 @@ struct recording_sink
   void on_book_update(const kraken::book_update& u) { ++updates; update_log.push_back(u); }
 };
 
-static bool same(const std::vector<kraken::level>& a, const std::vector<kraken::level>& b)
+static bool same(const std::vector<mb::level>& a, const std::vector<mb::level>& b)
 {
   if (a.size() != b.size()) return false;
   for (std::size_t i = 0; i < a.size(); ++i)
@@ -59,14 +60,17 @@ static const char* update_json = R"({
 
 static_assert(kraken_sink<recording_sink>);
 
-// Built like the connection layer builds received_message::payload: with
+// Built like the connection layer builds received_message: payload with
 // spare capacity for simdjson's padding requirement
-static std::string padded(std::string_view json)
+static received_message padded(std::string_view json, std::uint64_t epoch = 1,
+                               received_message::clock::time_point t = {})
 {
-  std::string s;
-  s.reserve(json.size() + simdjson::SIMDJSON_PADDING);
-  s.assign(json);
-  return s;
+  received_message m;
+  m.payload.reserve(json.size() + simdjson::SIMDJSON_PADDING);
+  m.payload.assign(json);
+  m.connection_epoch = epoch;
+  m.recv_time = t;
+  return m;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,11 +82,19 @@ static void heartbeat_is_ignored()
   CHECK(d.decode(padded(R"({"channel":"heartbeat"})")) == decode_status::ignored);
 }
 
+static void status_is_ignored()
+{
+  recording_sink sink;
+  kraken_decoder<recording_sink> d(sink);
+  CHECK(d.decode(padded(R"({"channel":"status","type":"update","data":[{"api_version":"v2",
+      "connection_id":123,"system":"online","version":"2.0.0"}]})")) == decode_status::ignored);
+}
+
 static void unknown_channel_is_reported()
 {
   recording_sink sink;
   kraken_decoder<recording_sink> d(sink);
-  CHECK(d.decode(padded(R"({"channel":"status","type":"update","data":[]})")) == decode_status::unknown_type);
+  CHECK(d.decode(padded(R"({"channel":"ticker","type":"update","data":[]})")) == decode_status::unknown_type);
 }
 
 static void invalid_json_is_malformed()
@@ -93,11 +105,43 @@ static void invalid_json_is_malformed()
   CHECK(d.decode(padded("not json")) == decode_status::malformed);
 }
 
-static void missing_channel_is_malformed()
+static void method_responses_are_ignored()
+{
+  // Acks, pongs and errors all ignored for now (errors not processed yet)
+  recording_sink sink;
+  kraken_decoder<recording_sink> d(sink);
+  CHECK(d.decode(padded(R"({"method":"subscribe","result":{"channel":"book","depth":10,
+      "snapshot":true,"symbol":"BTC/USD"},"success":true,"time_in":"2023-10-06T17:35:55.000000Z",
+      "time_out":"2023-10-06T17:35:55.000100Z"})")) == decode_status::ignored);
+  CHECK(d.decode(padded(R"({"method":"pong","req_id":101})")) == decode_status::ignored);
+  CHECK(d.decode(padded(R"({"error":"Currency pair not supported ALT/USD","method":"subscribe",
+      "success":false,"symbol":"ALT/USD"})")) == decode_status::ignored);
+  CHECK(sink.snapshots + sink.updates == 0);
+}
+
+static void missing_channel_and_method_is_malformed()
 {
   recording_sink sink;
   kraken_decoder<recording_sink> d(sink);
-  CHECK(d.decode(padded(R"({"method":"subscribe","success":true})")) == decode_status::malformed);
+  CHECK(d.decode(padded(R"({"success":true})")) == decode_status::malformed);
+  CHECK(d.decode(padded(R"({"method":1})")) == decode_status::malformed);
+  CHECK(d.decode(padded(R"({})")) == decode_status::malformed);
+}
+
+static void receive_info_is_forwarded()
+{
+  recording_sink sink;
+  kraken_decoder<recording_sink> d(sink);
+  const auto t1 = received_message::clock::time_point{std::chrono::milliseconds{100}};
+  const auto t2 = received_message::clock::time_point{std::chrono::milliseconds{200}};
+  d.decode(padded(snapshot_json, 1, t1));
+  d.decode(padded(update_json, 2, t2));
+
+  if (sink.snapshot_log.size() != 1 || sink.update_log.size() != 1) { CHECK(false); return; }
+  CHECK(sink.snapshot_log[0].rx.connection_epoch == 1);
+  CHECK(sink.snapshot_log[0].rx.recv_time == t1);
+  CHECK(sink.update_log[0].rx.connection_epoch == 2);
+  CHECK(sink.update_log[0].rx.recv_time == t2);
 }
 
 static void unpadded_payload_is_rejected()
@@ -106,10 +150,10 @@ static void unpadded_payload_is_rejected()
   // the input, which is why the connection layer reserves payload_padding
   recording_sink sink;
   kraken_decoder<recording_sink> d(sink);
-  std::string tight;
-  tight.assign(R"({"channel":"heartbeat"})");
-  tight.shrink_to_fit();
-  if (tight.capacity() - tight.size() < simdjson::SIMDJSON_PADDING)
+  received_message tight;
+  tight.payload.assign(R"({"channel":"heartbeat"})");
+  tight.payload.shrink_to_fit();
+  if (tight.payload.capacity() - tight.payload.size() < simdjson::SIMDJSON_PADDING)
   {
     CHECK(d.decode(tight) == decode_status::malformed);
   }
@@ -121,7 +165,7 @@ static void stats_count_each_status()
   kraken_decoder<recording_sink> d(sink);
   d.decode(padded(R"({"channel":"heartbeat"})"));
   d.decode(padded(R"({"channel":"heartbeat"})"));
-  d.decode(padded(R"({"channel":"status"})"));
+  d.decode(padded(R"({"channel":"ticker"})"));
   d.decode(padded("garbage"));
 
   CHECK(d.stats().ignored == 2);
@@ -279,9 +323,12 @@ int main()
   std::cout << "Running kraken_decoder tests...\n\n";
 
   test::run("HeartbeatIsIgnored", heartbeat_is_ignored);
+  test::run("StatusIsIgnored", status_is_ignored);
   test::run("UnknownChannelIsReported", unknown_channel_is_reported);
   test::run("InvalidJsonIsMalformed", invalid_json_is_malformed);
-  test::run("MissingChannelIsMalformed", missing_channel_is_malformed);
+  test::run("MethodResponsesAreIgnored", method_responses_are_ignored);
+  test::run("MissingChannelAndMethodIsMalformed", missing_channel_and_method_is_malformed);
+  test::run("ReceiveInfoIsForwarded", receive_info_is_forwarded);
   test::run("UnpaddedPayloadIsRejected", unpadded_payload_is_rejected);
   test::run("StatsCountEachStatus", stats_count_each_status);
   test::run("SnapshotIsDecoded", snapshot_is_decoded);

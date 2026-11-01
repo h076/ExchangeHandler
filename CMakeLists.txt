@@ -73,11 +73,17 @@ target_include_directories(decode_lib
         src/common
 )
 
-# Live smoke test against Kraken's public WebSocket feed (needs network)
+# Live tests against Kraken's public WebSocket feed (need network), in tests/live.
+# Shared setup is in tests/live/live_common.hpp.
 option(BUILD_LIVE_TESTS "Build live venue test executables" ON)
 if(BUILD_LIVE_TESTS)
-    add_executable(kraken_test src/connection/kraken_test.cpp)
-    target_link_libraries(kraken_test PRIVATE connection_lib)
+    # Connection layer only: raw payload counts
+    add_executable(kraken_connection_live tests/live/kraken_connection_live.cpp)
+    target_link_libraries(kraken_connection_live PRIVATE connection_lib)
+
+    # Connection + decode, with resync_standin_sink in place of resync
+    add_executable(kraken_decode_live tests/live/kraken_decode_live.cpp)
+    target_link_libraries(kraken_decode_live PRIVATE connection_lib decode_lib)
 endif()
 
 # Install the library

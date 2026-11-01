@@ -1,42 +1,32 @@
 #pragma once
 
-#include <array>
+// Kraken v2 venue-native book messages, produced by the Kraken decoder.
+// Kraken-specific because of the checksum (CRC32 of the top 10 levels), which
+// resync uses instead of sequence numbers.
+
 #include <cstdint>
-#include <string_view>
 #include <vector>
+
+#include "market_types.hpp"
+#include "received_message.hpp"
 
 namespace kraken {
 
-// Fixed-point: price 65001.5 stored as 6500150000000 with a 1e8 scale.
-// Exact, unlike double.
-using fixed = std::int64_t;
-inline constexpr fixed fixed_scale = 100'000'000;
-
-// Fixed-size symbol like "BTC/USD", so copying it never allocates
-struct symbol {
-    std::array<char, 16> chars{};
-    std::uint8_t len = 0;
-    std::string_view view() const { return {chars.data(), len}; }
-};
-
-struct level {
-    fixed price;
-    fixed qty;        // 0 means "remove this price level"
-};
-
 struct book_snapshot {
-    symbol sym;
-    std::vector<level> bids;
-    std::vector<level> asks;
+    mb::symbol sym;
+    std::vector<mb::level> bids;
+    std::vector<mb::level> asks;
     std::uint32_t checksum;
+    receive_info rx;              // set by the decoder from the received_message
 };
 
 struct book_update {
-    symbol sym;
-    std::vector<level> bids;
-    std::vector<level> asks;
+    mb::symbol sym;
+    std::vector<mb::level> bids;
+    std::vector<mb::level> asks;
     std::uint32_t checksum;
     std::int64_t  timestamp_ns;   // parsed from Kraken's timestamp string
+    receive_info rx;              // set by the decoder from the received_message
 };
 
 } // namespace kraken

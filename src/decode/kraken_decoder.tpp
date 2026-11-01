@@ -18,26 +18,49 @@ kraken_decoder<Sink>::kraken_decoder(Sink& next)
 
 // Convert payload into a simdjson docuemnt object
 template <kraken_sink Sink>
-decode_status kraken_decoder<Sink>::do_decode(const std::string& payload)
+decode_status kraken_decoder<Sink>::do_decode(const received_message& msg)
 {
+  const std::string& payload = msg.payload;
+
   simdjson::ondemand::document doc;
   if (m_parser.iterate(payload.data(), payload.size(), payload.capacity()).get(doc))
   {
     return decode_status::malformed;
   } 
 
-  std::string channel;
-  if (doc["channel"].get_string().get(channel))
+  // string_view points into the parser's buffer: no copy, valid for this call
+  std::string_view channel;
+  const auto channel_err = doc["channel"].get_string().get(channel);
+
+  // No "channel" but a "method": a response to one of our requests
+  // (subscribe ack, pong, error). Not processed yet, so errors are dropped too.
+  if (channel_err == simdjson::NO_SUCH_FIELD)
+  {
+    std::string_view method;
+    if (doc["method"].get_string().get(method))
+    {
+      return decode_status::malformed;
+    }
+    return decode_status::ignored;
+  }
+
+  if (channel_err)
   {
     return decode_status::malformed;
   }
 
   if (channel == "book")
   {
-    return decode_book(doc);
+    return decode_book(doc, msg.info());
   }
   else if (channel == "heartbeat")
   {
+    return decode_status::ignored;
+  }
+  else if (channel == "status")
+  {
+    // Exchange state (online / maintenance / cancel_only / post_only).
+    // Not acted on yet.
     return decode_status::ignored;
   }
   else
@@ -47,7 +70,8 @@ decode_status kraken_decoder<Sink>::do_decode(const std::string& payload)
 }
 
 template <kraken_sink Sink>
-decode_status kraken_decoder<Sink>::decode_book(simdjson::ondemand::document& doc)
+decode_status kraken_decoder<Sink>::decode_book(simdjson::ondemand::document& doc,
+                                                const receive_info& rx)
 {
   std::string_view type;
   if (doc["type"].get_string().get(type))
@@ -86,6 +110,7 @@ decode_status kraken_decoder<Sink>::decode_book(simdjson::ondemand::document& do
       {
         return decode_status::malformed;
       }
+      m_snapshot.rx = rx;
       m_next.on_book_snapshot(m_snapshot);
     }
     else
@@ -94,6 +119,7 @@ decode_status kraken_decoder<Sink>::decode_book(simdjson::ondemand::document& do
       {
         return decode_status::malformed;
       }
+      m_update.rx = rx;
       m_next.on_book_update(m_update);
     }
     ++entries;

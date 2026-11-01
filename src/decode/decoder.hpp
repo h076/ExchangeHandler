@@ -3,10 +3,12 @@
 #include <cstdint>
 #include <string>
 
+#include "../common/received_message.hpp"
+
 enum class decode_status
 {
   ok,
-  ignored,
+  ignored,       // valid but not forwarded: heartbeat, status
   malformed,
   unknown_type
 };
@@ -26,9 +28,9 @@ class decoder
     virtual ~decoder() = default;
   
     // public entry point 
-    decode_status decode(const std::string& payload)
+    decode_status decode(const received_message& msg)
     {
-      const auto status = do_decode(payload);
+      const auto status = do_decode(msg);
       record(status);
       return status;
     }
@@ -37,8 +39,9 @@ class decoder
 
   protected:
 
-    // Each venue overrides
-    virtual decode_status do_decode(const std::string& payload) = 0;
+    // Each venue overrides. Gets the whole message so the receive metadata
+    // (recv_time, connection_epoch) can be attached to what it produces.
+    virtual decode_status do_decode(const received_message& msg) = 0;
 
   private:
 

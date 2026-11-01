@@ -12,12 +12,15 @@
 #include <simdjson.h>
 
 #include "../common/kraken_messages.hpp"
+#include "../common/market_types.hpp"
 
 namespace kraken::parse {
 
-  // Number of decimal places in kraken::fixed (fixed_scale = 10^fixed_decimals)
-  inline constexpr int fixed_decimals = 8;
-  static_assert(fixed_scale == 100'000'000, "fixed_decimals must match fixed_scale");
+  // General types from common/market_types.hpp
+  using mb::fixed;
+  using mb::fixed_decimals;
+  using mb::level;
+  using mb::symbol;
 
   // Decimal text -> fixed point, exactly (no double rounding).
   // Accepts JSON number syntax: "65001.5", "-1", "0.00000001", "1e-05", "1.5E+3".

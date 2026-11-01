@@ -23,11 +23,11 @@ class kraken_decoder final : public decoder
 
   protected:
 
-    decode_status do_decode(const std::string& payload);
+    decode_status do_decode(const received_message& msg) override;
 
   private:
 
-    decode_status decode_book(simdjson::ondemand::document& doc);
+    decode_status decode_book(simdjson::ondemand::document& doc, const receive_info& rx);
 
     Sink& m_next;   // reference: the decoder feeds the caller's sink, not a copy
     simdjson::ondemand::parser m_parser;

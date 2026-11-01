@@ -7,7 +7,7 @@
 #include "kraken_parse.hpp"
 #include "../check.hpp"
 
-using kraken::fixed;
+using mb::fixed;
 namespace kp = kraken::parse;
 
 static std::optional<fixed> fx(std::string_view s)
@@ -111,7 +111,7 @@ static void timestamp_rejects_bad_input()
 
 static void symbol_limits()
 {
-  kraken::symbol s;
+  mb::symbol s;
   CHECK(kp::symbol_from("BTC/USD", s));
   CHECK(s.view() == "BTC/USD");
   CHECK(kp::symbol_from("ABCDEFGH/IJKLMNO", s));      // 16 chars: fits exactly

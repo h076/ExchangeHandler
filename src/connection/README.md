@@ -11,10 +11,11 @@ Maintains a live WebSocket feed to a venue: TLS, the WebSocket handshake, keep-a
 | `session_state_machine<Queue>` | Drives the session: subscribes on connect, reconnects on errors, pushes payloads into itself (it *is* the queue) |
 | `reconnect_policy` | Pure backoff logic, no timers: returns the next delay or gives up |
 | `subscription_manager` | Channel list + venue-specific formatter; produces the subscribe messages sent on every connect |
-| `received_message.hpp` | Queued unit: `payload`, `recv_time`, `connection_epoch` |
+| `../common/received_message.hpp` | Queued unit: `payload`, `recv_time`, `connection_epoch` |
 | `message_source_interface.hpp` | Queue contract: `push(received_message)` / `pop()` |
 | `message_source_deque` | Mutex-guarded `std::deque` implementation of the queue |
-| `kraken_test.cpp` | Live smoke test against Kraken v2 `book` (`kraken_test [-t seconds] [symbol ...]`) |
+
+Live test: `tests/live/kraken_connection_live.cpp` (see `tests/live/README.md`).
 
 ## Session state machine
 
